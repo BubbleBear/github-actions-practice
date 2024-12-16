@@ -1,0 +1,96 @@
+name: BUILD & UPLOAD & MERGE TO MAIN
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        type: choice
+        required: true
+        description: Which environment to deploy to
+        default: 'qa'
+        options:
+          - dev
+          - qa
+          - uat
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Get branch name
+        id: branch
+        run: echo "branch=$(echo ${GITHUB_REF#refs/heads/})" >> $GITHUB_OUTPUT
+
+      - name: Cache node modules
+        uses: actions/cache@v2
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
+
+      - name: Use Node.js v14.19
+        uses: actions/setup-node@v3
+        with:
+          node-version: v14.19
+
+      - name: Install Dependencies
+        run: |
+          yarn install --frozen-lockfile
+
+      - name: Set WX_APP_ID
+        run: |
+          if [ ${{ inputs.env }} == 'dev' ]; then
+            echo "WX_APP_ID=wx9a805418ade293fb" >> $GITHUB_ENV
+          elif [ ${{ inputs.env }} == 'qa' ]; then
+            echo "WX_APP_ID=wx9aff71e6be4731a2" >> $GITHUB_ENV
+          elif [ ${{ inputs.env }} == 'uat' ]; then
+            echo "WX_APP_ID=wxaa519ee366317f54" >> $GITHUB_ENV
+          fi
+
+      - name: Build App
+        run: yarn build
+        env:
+          WX_APP_ID: ${{ env.WX_APP_ID }}
+          BUILD_ENV: ${{ inputs.env }}
+
+      - name: Set private key
+        run: |
+          if [ ${{ inputs.env }} == 'dev' ]; then
+            echo "UPLOAD_PRIVATE_KEY=${{ secrets.UPLOAD_PRIVATE_KEY_DEV }}" >> $GITHUB_ENV
+          elif [ ${{ inputs.env }} == 'qa' ]; then
+            echo "UPLOAD_PRIVATE_KEY=${{ secrets.UPLOAD_PRIVATE_KEY_QA }}" >> $GITHUB_ENV
+          elif [ ${{ inputs.env }} == 'uat' ]; then
+            echo "UPLOAD_PRIVATE_KEY=${{ secrets.UPLOAD_PRIVATE_KEY_UAT }}" >> $GITHUB_ENV
+          fi
+
+      # 从 env.UPLOAD_PRIVATE_KEY 生成私钥文件
+      # see Project/Settings/Secrets
+      - name: Generate private key for upload
+        run: echo "$UPLOAD_PRIVATE_KEY" > private.key
+        env:
+          UPLOAD_PRIVATE_KEY: ${{ env.UPLOAD_PRIVATE_KEY }}
+
+      # 读取input.env，根据不同的环境变量，选择不同的上传机器人
+      - name: Set robot
+        run: |
+          if [ ${{ inputs.env }} == 'dev' ]; then
+            echo "ROBOT=2" >> $GITHUB_ENV
+          elif [ ${{ inputs.env }} == 'qa' ]; then
+            echo "ROBOT=3" >> $GITHUB_ENV
+          elif [ ${{ inputs.env }} == 'uat' ]; then
+            echo "ROBOT=4" >> $GITHUB_ENV
+          fi
+
+      # 上传代码
+      - name: Upload to WeChat
+        id: upload
+        continue-on-error: true
+        run: |
+          node ./deploy/index.js deploy --versions "$TARGET_BRANCH" --descriptions "Env[${{ inputs.env }}] from Github action for: $TARGET_BRANCH" --robot $ROBOT --private-key ./private.key
+        env:
+          TARGET_BRANCH: ${{ steps.branch.outputs.branch }}

@@ -1,8 +1,10 @@
 name: Merge epic/* branch to stg
+
 on:
   push:
     branches:
       - 'epic/*'
+
 jobs:
   merge-branch:
     runs-on: ubuntu-latest
